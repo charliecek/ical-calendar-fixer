@@ -16,7 +16,7 @@ foreach ($_GET as $key => $val) {
 }
 
 if (empty($strUrl)) {
-  $strUrl = 'https://www.facebook.com/ical/u.php?uid=100013643946992&key=AQD0Yq-CxBj1axe5';
+  die("No iCal url");
 }
 
 $aHeader = array();
