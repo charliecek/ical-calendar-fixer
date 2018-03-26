@@ -45,9 +45,6 @@ $response = preg_replace($pattern, $replacement, $string);
 // add cover photo //
 $response = addCoverPhotos($response);
 
-$strFileName = __DIR__ . "/latest.ical.txt";
-file_put_contents($strFileName, $response);
-
 if ($bDownload) {
   header($aHeader["Content-Type"]);
   header($aHeader["Content-Disposition"]);
@@ -69,92 +66,12 @@ function HandleHeaderLine( $curl, $strHeaderLine ) {
 }
 function getCoverPhoto($strBody) {
   $aMatches = array();
-  preg_match('/<a[^>]*data-ploi=("[^">]*")[^>]*class="[^"]*(_fbEventsPermalinkHeader__coverPhotoLink)/', $strBody, $aMatches);
-  if (!empty($aMatches)) {
-    return trim($aMatches[1], '"\'');
+  preg_match('/<img[^>]*src=("[^">]*")[^>]*class="[^"]*coverPhotoImg/', $strBody, $aMatches);
+  if (empty($aMatches)) {
+    preg_match('/<img[^>]*class="[^"]*coverPhotoImg[^"]*"[^>]*src=("[^">]*")/', $strBody, $aMatches);
   }
-  preg_match('/<a[^>]*class="[^"]*(_fbEventsPermalinkHeader__coverPhotoLink)[^>]*data-ploi=("[^">]*")/', $strBody, $aMatches);
-  if (!empty($aMatches)) {
-    return trim($aMatches[2], '"\'');
-  }
-  preg_match('/<img[^>]*src=("[^">]*")[^>]*class="[^"]*(coverPhotoImg|scaledImageFitHeight|scaledImageFitWidth)/', $strBody, $aMatches);
-  if (!empty($aMatches)) {
-    return trim($aMatches[1], '"\'');
-  }
-  preg_match('/<img[^>]*class="[^"]*(coverPhotoImg|scaledImageFitHeight|scaledImageFitWidth)[^"]*"[^>]*src=("[^">]*")/', $strBody, $aMatches);
-  if (!isset($aMatches[2])) {
-    return "";
-  }
-  return trim($aMatches[2], '"\'');
+  return trim($aMatches[1], '"\'');
 }
-
-function getEventIdFromUrl($strUrl) {
-  $aUrlParts = explode("/", $strUrl);
-  return $aUrlParts[count($aUrlParts)-2];
-}
-
-function getEventCover($strEventID = '') {
-  $aReturn = array(
-  );
-  
-  if (empty($strEventID)) {
-    $aReturn["success"] = false;
-    $aReturn["message"] = "No event ID!";
-    return $aReturn;
-  }
-  try{
-    require_once( dirname(__FILE__) . '/fb-api-sdk/autoload.php' );
-  }
-  catch(Exception $o){
-    $aReturn["success"] = false;
-    $aReturn["exception"] = $o;
-    return $aReturn;
-  }
-
-  $aConfig = array(
-    'app_id' => '768253436664320',
-    'app_secret' => 'd56732792055592c7eaa87a3838affdf',
-    'default_graph_version' => 'v2.10'
-  );
-
-  $objFacebook = new Facebook\Facebook($aConfig);
-
-  try {
-    $objFacebook->setDefaultAccessToken($aConfig['app_id'].'|'.$aConfig['app_secret']);
-    $objResponse = $objFacebook->get($strEventID.'?fields=cover');
-  //   $objResponse = $objFacebook->sendRequest('GET', $strEventID, ['fields' => 'cover']);
-  } catch(\Facebook\Exceptions\FacebookResponseException $e) {
-    // When Graph returns an error
-    $aReturn["success"] = false;
-    $aReturn["message"] = 'Graph returned an error: ' . $e->getMessage();
-    return $aReturn;
-  } catch(\Facebook\Exceptions\FacebookSDKException $e) {
-    // When validation fails or other local issues
-    $aReturn["success"] = false;
-    $aReturn["message"] = 'Facebook SDK returned an error: ' . $e->getMessage();
-    return $aReturn;
-  }
-
-  $aDecodedBody = $objResponse->getDecodedBody();
-  $strCoverPhotoSource = $aDecodedBody["cover"]["source"];
-
-  if (isset($aDecodedBody) && !empty($aDecodedBody)) {
-    if (isset($aDecodedBody["cover"]) && !empty($aDecodedBody["cover"])) {
-      $aReturn["success"] = true;
-      $aReturn["cover"] = $aDecodedBody["cover"];
-      return $aReturn;
-    } else {
-      $aReturn["success"] = false;
-      $aReturn["message"] = "No cover in decoded body!";
-      return $aReturn;
-    }
-  } else {
-    $aReturn["success"] = false;
-    $aReturn["message"] = "No decoded body!";
-    return $aReturn;
-  }
-}
-
 function addCoverPhotos($strResponse) {
   $aMatches = array();
   preg_match_all( '/\n'.preg_quote('URL:').'.*\n/i', $strResponse, $aMatches );
@@ -165,12 +82,10 @@ function addCoverPhotos($strResponse) {
     $bNew = true;
     $strEventUrl = trim(str_ireplace("url:", "", $strMatch));
     $bNewChange = false;
-    $strCoverPhoto = false;
     $strCoverPhoto = getCachedPhoto($aCachedPhotos, $strEventUrl, $bNew, $bNewChange);
     $bChange = $bChange || $bNewChange;
     // $strCoverPhoto = false;
     if (false === $strCoverPhoto) {
-      // Make a request to get the organizer name (and if fb api fails, the cover photo) //
       $ch = curl_init();
       curl_setopt($ch, CURLOPT_URL, $strEventUrl);
       curl_setopt($ch, CURLOPT_FAILONERROR, true); 
@@ -183,30 +98,12 @@ function addCoverPhotos($strResponse) {
       curl_close($ch);
       $strResponse = addContactUrl($strResponse, $strEventUrl, $strMatchResponse);
 
-      // Let's try the DB api first //
-      $strEventID = getEventIdFromUrl($strEventUrl);
-      if (isset($strEventUrl) && !empty($strEventUrl)) {
-        $aResponse = getEventCover($strEventID);
-      }
-      if (isset($aResponse) && !empty($aResponse) && $aResponse['success']) {
-        // Success //
-        $strCoverPhoto = $aResponse["cover"]["source"];
-      }
-      // One more check //
-      if (isset($strCoverPhoto) && !empty($strCoverPhoto)) {
-        // Success => add the newly obtained photo //
+      $strCoverPhoto = getCoverPhoto($strMatchResponse);
+      if (!empty($strCoverPhoto)) {
         $aCachedPhotos = addPhotoToCache($aCachedPhotos, $strEventUrl, $strCoverPhoto, $bNew);
         $bChange = true;
-      } else {
-        // No cover photo obtained :(  => let's try to do it the old way by parsing it from the response //
-        $strCoverPhoto = getCoverPhoto($strMatchResponse);
-        if (!empty($strCoverPhoto)) {
-          $aCachedPhotos = addPhotoToCache($aCachedPhotos, $strEventUrl, $strCoverPhoto, $bNew);
-          $bChange = true;
-        }
       }
     } else {
-      // The cover photo is cached already //
       $strResponse = addContactUrl($strResponse, $strEventUrl);
     }
 
@@ -250,9 +147,7 @@ function addContactUrl($strResponse, $strEventUrl, $strMatchResponse = false) {
     if (!empty($aEvent) && isset($aEvent['CONTACT'])) {
       $aContact = explode( ";", $aEvent['CONTACT'] );
       $strContactName = $aContact[0];
-      $bDebug = false;
-//       $bDebug = ($strEventUrl == 'https://www.facebook.com/events/996724657122336/');
-      $strContactUrl = parseContactUrlByName($strMatchResponse, $strContactName, $bDebug);
+      $strContactUrl = parseContactUrlByName($strMatchResponse, $strContactName);
       if (!empty($strContactUrl)) {
         $aCachedContactUrls[$strEventUrl] = $strContactUrl;
         file_put_contents($strFileName, var_export($aCachedContactUrls, true));
@@ -265,32 +160,15 @@ function addContactUrl($strResponse, $strEventUrl, $strMatchResponse = false) {
     }
   }
 }
-function parseContactUrlByName($strMatchResponse, $strContactName, $bDebug = false) {
+function parseContactUrlByName($strMatchResponse, $strContactName) {
   $aMatches = array();
   $strPattern =
     preg_quote("<a", '/')
-    .'[^>]*href="(http[^">]*)"[^>]*'
+    .'[^>]*href="([^">]*)"[^>]*'
     .preg_quote(">", '/')
     .preg_quote($strContactName, '/')
     .preg_quote("</a>", '/');
   preg_match('/'.$strPattern.'/is', $strMatchResponse, $aMatches);
-  if (isset($aMatches[1])) {
-    return $aMatches[1];
-  }
-  $strCleanPattern = '~[^a-zA-Z0-9_/:\~-]~';
-  $strMatchResponseClean = preg_replace($strCleanPattern, '_', $strMatchResponse);
-  $strContactNameClean = preg_replace($strCleanPattern, '_', $strContactName);
-  if ($bDebug) {
-    var_dump($strContactName, $strContactNameClean, $strMatchResponseClean);
-    exit;
-  }
-  $strPattern =
-    preg_quote("<a", '/')
-    .'[^>]*href="(http[^">]*)"[^>]*'
-    .preg_quote(">", '/')
-    .preg_quote($strContactNameClean, '/')
-    .preg_quote("</a>", '/');
-  preg_match('/'.$strPattern.'/is', $strMatchResponseClean, $aMatches);
   if (isset($aMatches[1])) {
     return $aMatches[1];
   }
@@ -371,9 +249,7 @@ function putCachedPhotos($aCachedPhotos) {
   return file_put_contents($strFileName, var_export($aCachedPhotos, true));
 }
 function getCachedPhoto(&$aCachedPhotos, $strEventUrl, &$bNew, &$bChange) {
-  if (isset($aCachedPhotos[$strEventUrl])) {
-    $aPhoto = $aCachedPhotos[$strEventUrl];
-  }
+  $aPhoto = $aCachedPhotos[$strEventUrl];
   
   if (!isset($aPhoto) || empty($aPhoto)) {
     // photo is not cached yet //
@@ -413,9 +289,7 @@ function getCachedPhoto(&$aCachedPhotos, $strEventUrl, &$bNew, &$bChange) {
   return $mixReturn;
 }
 function addPhotoToCache($aCachedPhotos, $strEventUrl, $strPhotoUrl, &$bNew) {
-  if (isset($aCachedPhotos[$strEventUrl])) {
-    $aPhoto = $aCachedPhotos[$strEventUrl];
-  }
+  $aPhoto = $aCachedPhotos[$strEventUrl];
   global $aDayCounts;
   $iDayOfWeek = min(array_keys($aDayCounts, min($aDayCounts)));
   $aDayCounts[$iDayOfWeek]++;
